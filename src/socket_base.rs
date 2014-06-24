@@ -1,80 +1,99 @@
-use consts;
-use result::{ZmqError, ZmqResult};
-use std::io::net::ip::SocketAddr;
-use tcp_listener::TcpListener;
 use endpoint::Endpoint;
+use msg::Msg;
+use options::Options;
+use result::ZmqResult;
+
+use std::collections::{HashMap, DList, Deque};
+use std::comm::Select;
+use std::io::net::tcp::TcpAcceptor;
+use std::io::TcpStream;
+use std::sync::{RWLock, Arc};
 
 
-pub trait SocketBase {
-    fn create() -> Self;
+pub enum SocketMessage {
+    // command message to SocketBase from interface
+    DoBind(TcpAcceptor),
 
-    fn getsockopt(&self, option_: consts::SocketOption) -> int;
+    // message to SocketBase from normal endpoints
+    OnConnected(TcpStream),
 
-    fn get_type(&self) -> consts::SocketType;
+    // message from SocketBase to interface
+    FeedChannel(Receiver<Box<Msg>>),
+}
 
-    fn add_endpoint(&self, endpoint: Box<Endpoint>);
 
-    fn bind(&self, addr: &str) -> ZmqResult<()> {
-        let (protocol, address) = try!(parse_uri(addr));
-        try!(check_protocol(protocol));
+pub struct SocketBase {
+    endpoints: DList<Box<Endpoint>>,
+    options: Arc<RWLock<Options>>,
+    chan_to_interface: Sender<ZmqResult<SocketMessage>>,
+}
 
-        match protocol {
-            "tcp" => {
-                match from_str::<SocketAddr>(address) {
-                    Some(addr) => {
-                        self.add_endpoint(box try!(TcpListener::new(addr)));
-                        Ok(())
+impl SocketBase {
+    pub fn new(options: Arc<RWLock<Options>>,
+               chan_to_interface: Sender<ZmqResult<SocketMessage>>) -> SocketBase {
+        SocketBase {
+            endpoints: DList::new(),
+            options: options,
+            chan_to_interface: chan_to_interface,
+        }
+    }
+
+    pub fn run(&mut self) {
+        loop {
+            // in order to call `handle` with a mutable `self`, we have to move the endpoints
+            // TODO: this doesn't look cool, we need a better solution
+            let mut endpoints = Vec::new();
+            loop {
+                match self.endpoints.pop_front() {
+                    Some(endpoint) => {
+                        endpoints.push(endpoint);
                     }
-                    None => Err(ZmqError::new(
-                        consts::EINVAL, "Invaid argument: bad address")),
-                }},
-            _ => Ok(())
-        }
-    }
-}
-
-fn parse_uri<'r>(uri: &'r str) -> ZmqResult<(&'r str, &'r str)> {
-    match uri.find_str("://") {
-        Some(pos) => {
-            let protocol = uri.slice_to(pos);
-            let address = uri.slice_from(pos + 3);
-            if protocol.len() == 0 || address.len() == 0 {
-                Err(ZmqError::new(
-                    consts::EINVAL,
-                    "Invalid argument: missing protocol or address"))
-            } else {
-                Ok((protocol, address))
+                    None => break
+                }
             }
-        },
-        None => Err(ZmqError::new(
-            consts::EINVAL, "Invalid argument: missing ://")),
-    }
-}
-
-fn check_protocol(protocol: &str) -> ZmqResult<()> {
-    match protocol {
-        "tcp" => Ok(()),
-        _ => Err(ZmqError::new(consts::EPROTONOSUPPORT, "Protocol not supported")),
-    }
-}
-
-
-#[cfg(test)]
-mod test {
-    use super::parse_uri;
-
-    #[test]
-    fn test_parse_uri() {
-        assert!(parse_uri("").is_err());
-        assert!(parse_uri("://").is_err());
-        assert!(parse_uri("tcp://").is_err());
-        assert!(parse_uri("://127.0.0.1").is_err());
-        match parse_uri("tcp://127.0.0.1:8890") {
-            Ok((protocol, address)) => {
-                assert_eq!(protocol, "tcp");
-                assert_eq!(address, "127.0.0.1:8890");
-            },
-            Err(_) => {assert!(false);},
+            let (msg, index) = {
+                let selector = Select::new();
+                let mut mapping = HashMap::new();
+                let mut index = 0;
+                for endpoint in endpoints.iter() {
+                    let handle = box selector.handle(endpoint.get_chan());
+                    let hid = handle.id();
+                    mapping.insert(hid, (handle, index));
+                    let handle = mapping.get_mut(&hid).mut0();
+                    unsafe {
+                        handle.add();
+                    }
+                    index += 1;
+                }
+                let hid = selector.wait();
+                match mapping.pop(&hid) {
+                    Some((mut handle, index)) => {
+                        match handle.recv_opt() {
+                            Ok(msg) => (Some(msg), index),
+                            _ => (None, index),
+                        }
+                    }
+                    None => fail!(),
+                }
+            };
+            match msg {
+                Some(msg) => endpoints.get_mut(index).in_event(msg, self),
+                None if endpoints.get(index).is_critical() => break,
+                _ => { endpoints.remove(index); }
+            }
+            self.endpoints.extend(endpoints.move_iter());
         }
+    }
+
+    pub fn add_endpoint(&mut self, endpoint: Box<Endpoint>) {
+        self.endpoints.push_back(endpoint);
+    }
+
+    pub fn clone_options(&self) -> Arc<RWLock<Options>> {
+        self.options.clone()
+    }
+
+    pub fn send_back(&self, msg: ZmqResult<SocketMessage>) {
+        self.chan_to_interface.send(msg);
     }
 }
