@@ -13,6 +13,56 @@ zmq.rs uses [this style guide][3] found on Rust wiki for code style.
 
 To report an issue, use the [zmq.rs issue tracker][4] at github.com.
 
+## Usage
+
+There are only very few interfaces implemented till now. Try this example as `src/hello-zmq.rs`:
+
+```rust
+extern crate zmq;
+
+fn main() {
+    let ctx = zmq::Context::new();
+
+    let mut req = ctx.socket(zmq::REQ);
+    req.connect("tcp://127.0.0.1:12347").unwrap();
+
+    let mut rep = ctx.socket(zmq::REP);
+    rep.bind("tcp://127.0.0.1:12347").unwrap();
+
+    let mut msg = box zmq::Msg::new(4);
+    msg.data.push_all([65u8, 66u8, 67u8, 68u8]);
+
+    req.msg_send(msg).unwrap();
+    println!("We got: {}", rep.msg_recv().unwrap());
+}
+```
+
+We recommend using [cargo](https://github.com/rust-lang/cargo) to build this program. Create a file
+`Cargo.toml` with:
+
+```toml
+[package]
+
+name = "hello-zmq"
+version = "0.1.0"
+authors = ["you@example.com"]
+
+[[bin]]
+
+name = "hello-zmq"
+
+[dependencies.zmq]
+
+git = "https://github.com/zeromq/zmq.rs.git"
+```
+
+Then build and run with cargo, who will automatically download and build the dependencies for you:
+
+```bash
+$ cargo build
+$ ./target/hello-zmq
+```
+
 ## Development
 
 Under C4.1 process, you are more than welcome to help us by:
@@ -25,8 +75,7 @@ Under C4.1 process, you are more than welcome to help us by:
 To run the test suite:
 
 ```bash
-cd src
-make tests
+cargo test
 ```
 
 ## Community
