@@ -1,3 +1,5 @@
+[![Build Status](https://travis-ci.org/zeromq/zmq.rs.svg?branch=master)](https://travis-ci.org/zeromq/zmq.rs)
+
 # zmq.rs - native stack of ØMQ in Rust
 
 zmq.rs is a native implementation of ØMQ in the [Rust programming language][1]. It is still in a
@@ -62,6 +64,11 @@ Then build and run with cargo, who will automatically download and build the dep
 $ cargo build
 $ ./target/hello-zmq
 ```
+
+## Documentation
+
+API document can be found [here](http://www.rust-ci.org/zeromq/zmq.rs/doc/zmq/), and there are tons
+of useful documentation at [zeromq.org](http://zeromq.org/intro:read-the-manual).
 
 ## Development
 

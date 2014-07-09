@@ -1,32 +1,39 @@
 use consts;
+use inproc::InprocManager;
+use rep;
+use req;
+use socket::ZmqSocket;
 use socket_base::SocketBase;
-use rep::RepSocket;
-use req::ReqSocket;
 
 
+/// Before using any ØMQ code you must create a ØMQ *context*.
 pub struct Context {
-    starting: bool,
-    terminating: bool,
+    inproc_mgr: InprocManager,
 }
 
 impl Context {
+    /// Create a new ØMQ context.
     pub fn new() -> Context {
         Context {
-            starting: true,
-            terminating: false,
+            inproc_mgr: InprocManager::new(),
         }
     }
 
-    pub fn socket(&self, type_: consts::SocketType) -> Box<SocketBase> {
+    /// This function shall create a ØMQ socket within the specified *context* and return a box of
+    /// the newly created socket. The *type_* argument specifies the socket type, which determines
+    /// the semantics of communication over the socket.
+    ///
+    /// The newly created socket is initially unbound, and not associated with any endpoints.
+    /// In order to establish a message flow a socket must first be connected to at least one
+    /// endpoint with [`connect`](trait.ZmqSocket.html#tymethod.connect), or at least one endpoint
+    /// must be created for accepting incoming connections with
+    /// [`bind`](trait.ZmqSocket.html#tymethod.bind).
+    ///
+    pub fn socket(&self, type_: consts::SocketType) -> Box<ZmqSocket + Send> {
+        let base = SocketBase::new(self.inproc_mgr.chan());
         match type_ {
-            consts::REQ => {
-                let ret: ReqSocket = SocketBase::new();
-                box ret as Box<SocketBase>
-            },
-            consts::REP => {
-                let ret: RepSocket = SocketBase::new();
-                box ret as Box<SocketBase>
-            },
+            consts::REQ => box req::new(base) as Box<ZmqSocket + Send>,
+            consts::REP => box rep::new(base) as Box<ZmqSocket + Send>,
         }
     }
 }
@@ -38,8 +45,6 @@ mod test {
 
     #[test]
     fn test_new() {
-        let ctx = Context::new();
-        assert_eq!(ctx.starting, true);
+        Context::new();
     }
 }
-
